@@ -32,6 +32,7 @@ def perform_search():
 
     is_subfolder = subfolder_var.get()
     is_case_sensitive = case_var.get()
+    is_compact = compact_var.get() # 取得是否為精簡模式(僅顯示檔名)
 
     stop_event.clear()
 
@@ -43,7 +44,7 @@ def perform_search():
     text_output.insert(tk.END, f"🚀 開始搜尋資料夾: {folder_path}\n")
     text_output.insert(tk.END, "請稍候...\n")
 
-    thread = threading.Thread(target=search_logic, args=(keywords, folder_path, file_patterns, is_subfolder, is_case_sensitive))
+    thread = threading.Thread(target=search_logic, args=(keywords, folder_path, file_patterns, is_subfolder, is_case_sensitive, is_compact))
     thread.daemon = True
     thread.start()
 
@@ -52,10 +53,13 @@ def stop_search():
     stop_event.set()
     btn_stop.config(state=tk.DISABLED, text="🛑 停止中...")
 
-def search_logic(keywords, folder_path, file_patterns, is_subfolder, is_case_sensitive):
+def search_logic(keywords, folder_path, file_patterns, is_subfolder, is_case_sensitive, is_compact):
     """實際的搜尋邏輯 (依關鍵字分組)"""
     total_result_count = 0
     is_aborted = False
+    
+    # 根據模式動態調整單位的文字
+    unit_text = "個符合的檔案" if is_compact else "筆符合的行數"
     
     try:
         # 第一步：先收集所有符合條件的檔案路徑
@@ -97,33 +101,39 @@ def search_logic(keywords, folder_path, file_patterns, is_subfolder, is_case_sen
                                     is_aborted = True
                                     break
                                 
-                                # 【關鍵修復】：剔除二進位檔案中的 Null Byte (\x00)
-                                # 避免 GUI 判斷換行失敗導致兩行併在一起、筆數顯示不符的問題
                                 clean_line = line.replace('\x00', '').strip()
-                                
-                                # 如果這行清空後就沒東西了，直接跳過
                                 if not clean_line:
                                     continue
 
                                 check_line = clean_line if is_case_sensitive else clean_line.lower()
+                                
+                                # 只要在這行找到關鍵字
                                 if search_kw in check_line:
-                                    result_line = f"{filepath} : {clean_line}\n"
-                                    text_output.insert(tk.END, result_line)
-                                    kw_result_count += 1
-                                    total_result_count += 1
-                                    
-                                    if kw_result_count % 10 == 0:
+                                    if is_compact:
+                                        # 【精簡模式】：只印檔名，而且立刻中斷這個檔案的讀取 (加速！)
+                                        text_output.insert(tk.END, f"{filepath}\n")
+                                        kw_result_count += 1
+                                        total_result_count += 1
                                         text_output.see(tk.END)
+                                        break # 跳出 for line in f 的迴圈，直接換下一個檔案
+                                    else:
+                                        # 【一般模式】：印出檔名與內容，並繼續尋找同一檔案的下一行
+                                        result_line = f"{filepath} : {clean_line}\n"
+                                        text_output.insert(tk.END, result_line)
+                                        kw_result_count += 1
+                                        total_result_count += 1
+                                        if kw_result_count % 10 == 0:
+                                            text_output.see(tk.END)
                     except Exception:
                         pass
                 
-                text_output.insert(tk.END, f"👉 [{kw}] 共找到 {kw_result_count} 筆符合的行數。\n")
+                text_output.insert(tk.END, f"👉 [{kw}] 共找到 {kw_result_count} {unit_text}。\n")
                 text_output.see(tk.END)
 
         if is_aborted:
-            text_output.insert(tk.END, f"\n⚠️ 搜尋已手動中斷！總計找到 {total_result_count} 筆符合的行數。")
+            text_output.insert(tk.END, f"\n⚠️ 搜尋已手動中斷！總計找到 {total_result_count} {unit_text}。")
         else:
-            text_output.insert(tk.END, f"\n✅ 搜尋完成！總計找到 {total_result_count} 筆符合的行數。")
+            text_output.insert(tk.END, f"\n✅ 搜尋完成！總計找到 {total_result_count} {unit_text}。")
         
         text_output.see(tk.END)
         
@@ -168,7 +178,7 @@ def select_all(event):
 # === GUI 介面設計 ===
 root = tk.Tk()
 root.title("FindX_UTF8 搜尋工具")
-root.geometry("700x620") 
+root.geometry("750x620") 
 root.configure(padx=15, pady=15)
 
 # 1. 關鍵字輸入區
@@ -191,13 +201,15 @@ tk.Label(frame_pattern, text="目標檔案名稱 (逗號分隔):", font=("微軟
 pattern_var = tk.StringVar(value="*.fmb, *.rdf, *.txt, *.sql")
 tk.Entry(frame_pattern, textvariable=pattern_var, font=("微軟正黑體", 10)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
 
-# 4. 進階選項區 (Checkbox)
+# 4. 進階選項區 (新增：僅顯示檔名)
 frame_options = tk.Frame(root)
 frame_options.pack(fill=tk.X, pady=(0, 10))
 subfolder_var = tk.BooleanVar(value=True) 
-case_var = tk.BooleanVar(value=False)     
+case_var = tk.BooleanVar(value=False)
+compact_var = tk.BooleanVar(value=False) # 預設不勾選，維持原本詳細輸出
 tk.Checkbutton(frame_options, text="包含子資料夾", variable=subfolder_var, font=("微軟正黑體", 10)).pack(side=tk.LEFT, padx=(0, 15))
-tk.Checkbutton(frame_options, text="區分大小寫", variable=case_var, font=("微軟正黑體", 10)).pack(side=tk.LEFT)
+tk.Checkbutton(frame_options, text="區分大小寫", variable=case_var, font=("微軟正黑體", 10)).pack(side=tk.LEFT, padx=(0, 15))
+tk.Checkbutton(frame_options, text="僅顯示檔名 (加快速度)", variable=compact_var, font=("微軟正黑體", 10, "bold"), fg="#1976D2").pack(side=tk.LEFT)
 
 # 5. 按鈕區 (三顆按鈕並排)
 frame_buttons = tk.Frame(root)
